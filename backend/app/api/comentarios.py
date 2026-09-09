@@ -3,18 +3,23 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.database.connection import get_db
 from app.models.models import Comentario
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import json
 import nltk
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from collections import Counter
 
+nltk.download('punkt', quiet=True)
+nltk.download('punkt_tab', quiet=True)
+nltk.download('stopwords', quiet=True)
+
 router = APIRouter(prefix="/api/comentarios", tags=["Comentarios"])
 
 class ComentarioCreate(BaseModel):
     cliente_id: int | None = None
-    contenido: str
+    contenido: str | None = None
+    texto: str | None = None  # Soporte por si el frontend manda "texto" en lugar de "contenido"
     canal: str = "web"
 
 @router.get("/")
@@ -23,20 +28,49 @@ def listar_comentarios(db: Session = Depends(get_db)):
 
 @router.post("/")
 def crear_comentario(comentario: ComentarioCreate, db: Session = Depends(get_db)):
-    # 1. Guardar el comentario principal
-    db_comentario = Comentario(**comentario.model_dump())
+    # Unificar si el frontend envió 'contenido' o 'texto'
+    texto_a_guardar = comentario.contenido or comentario.texto
+    if not texto_a_guardar:
+        raise HTTPException(status_code=422, detail="El contenido o texto del comentario es obligatorio")
+
+    # 1. Guardar el comentario principal usando SQLAlchemy
+    db_comentario = Comentario(
+        cliente_id=comentario.cliente_id,
+        contenido=texto_a_guardar,
+        canal=comentario.canal
+    )
     db.add(db_comentario)
     db.commit()
     db.refresh(db_comentario)
 
     # 2. Procesar automáticamente con NLTK
-    tokens = word_tokenize(db_comentario.contenido.lower(), language="spanish")
-    stop = set(stopwords.words("spanish"))
+    try:
+        tokens = word_tokenize(db_comentario.contenido.lower(), language="spanish")
+    except Exception:
+        tokens = db_comentario.contenido.lower().split()
+
+    try:
+        stop = set(stopwords.words("spanish"))
+    except Exception:
+        stop = set()
+
     limpios = [t for t in tokens if t.isalpha() and t not in stop]
     frecuencias = Counter(limpios).most_common(1)
     
     palabras_frec = [{"palabra": p, "frecuencia": f} for p, f in frecuencias]
-    categoria = "FELICITACION" if any(w in limpios for w in ["excelente", "rápido", "bueno", "gusto", "gran"]) else "GENERAL"
+    
+    palabras_pos = ["excelente", "rápido", "bueno", "gusto", "gran", "felicitaciones", "felicitacion", "perfecto"]
+    palabras_neg = ["malo", "mal", "pesimo", "lento", "terrible", "problema", "error", "reclamo"]
+    
+    score_pos = sum(1 for w in limpios if w in palabras_pos)
+    score_neg = sum(1 for w in limpios if w in palabras_neg)
+    
+    if score_pos > score_neg:
+        categoria = "FELICITACION"
+    elif score_neg > score_pos:
+        categoria = "RECLAMO"
+    else:
+        categoria = "GENERAL"
 
     # 3. Guardar el resultado vinculado en la tabla analisis_nlp
     try:
@@ -57,7 +91,7 @@ def crear_comentario(comentario: ComentarioCreate, db: Session = Depends(get_db)
         db.commit()
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error al registrar el análisis NLP: {str(e)}")
+        # No matamos la petición si falla el NLP secundario, pero dejamos constancia o pasamos
 
     return {
         "comentario": db_comentario,
