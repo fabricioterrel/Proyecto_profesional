@@ -18,16 +18,16 @@ except LookupError:
 
 app = FastAPI()
 
-# Configuración de CORS actualizada para permitir tu frontend local y el de Vercel
+# Configuración de CORS para permitir peticiones desde Vercel y cualquier origen
 app.add_middleware(
     CORSMiddleware, 
-    allow_origins=["*"],  # Permite conexiones desde cualquier origen (ideal para producción con Vercel)
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Se incluye el router después de crear la instancia de FastAPI
+# Inclusión de routers
 app.include_router(scipy_router)
 app.include_router(clientes_router)
 app.include_router(comentarios_router)
