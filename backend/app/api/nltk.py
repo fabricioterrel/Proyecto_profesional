@@ -1,5 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from sqlalchemy import text
+from app.database.connection import get_db
 import nltk
 from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
@@ -28,6 +31,60 @@ SERVICIOS_DB = {
 
 PALABRAS_POSITIVAS = {"excelente", "bueno", "buen", "gran", "gracias", "felicitaciones", "felicitacion", "perfecto", "rapido", "eficiente", "mejores", "satisfecho", "genial", "gusto"}
 PALABRAS_NEGATIVAS = {"malo", "mal", "pesimo", "pésimo", "lento", "terrible", "problema", "error", "reclamo", "demora", "falla", "deficiente", "queja"}
+
+# --- NUEVO: Endpoint para GUARDAR el comentario en Supabase ---
+@router.post("/api/comentarios")
+def crear_comentario(data: TextoInput, db: Session = Depends(get_db)):
+    try:
+        # Analizar categoría automáticamente con tu misma lógica NLTK
+        try:
+            tokens = word_tokenize(data.texto.lower(), language="spanish")
+        except Exception:
+            tokens = data.texto.lower().split()
+
+        try:
+            stop = set(stopwords.words("spanish"))
+        except Exception:
+            stop = set()
+
+        limpios = [t for t in tokens if t.isalpha() and t not in stop]
+        score_pos = sum(1 for p in limpios if p in PALABRAS_POSITIVAS)
+        score_neg = sum(1 for p in limpios if p in PALABRAS_NEGATIVAS)
+        
+        if score_pos > score_neg:
+            categoria = "FELICITACION"
+        elif score_neg > score_pos:
+            categoria = "RECLAMO"
+        else:
+            categoria = "GENERAL"
+
+        # Insertar directamente en la base de datos de Supabase
+        sql = text("INSERT INTO comentarios (contenido, categoria) VALUES (:contenido, :categoria) RETURNING id, contenido, categoria;")
+        result = db.execute(sql, {"contenido": data.texto, "categoria": categoria}).fetchone()
+        db.commit()
+        
+        return {
+            "mensaje": "Comentario guardado con éxito",
+            "comentario": {
+                "id": result[0],
+                "contenido": result[1],
+                "categoria": result[2]
+            }
+        }
+    except Exception as e:
+        db.rollback()
+        return {"error": str(e)}
+
+# --- NUEVO: Endpoint para OBTENER todos los comentarios de la base de datos ---
+@router.get("/api/comentarios")
+def obtener_comentarios(db: Session = Depends(get_db)):
+    try:
+        sql = text("SELECT id, contenido, categoria FROM comentarios ORDER BY id DESC;")
+        resultados = db.execute(sql).fetchall()
+        comentarios = [{"id": r[0], "contenido": r[1], "categoria": r[2]} for r in resultados]
+        return {"comentarios": comentarios}
+    except Exception as e:
+        return {"comentarios": [], "error": str(e)}
 
 @router.post("/api/comentarios/keywords")
 def keywords(data: TextoInput):
@@ -70,7 +127,6 @@ def buscar_servicios(data: BusquedaInput):
 
     limpios = [t.lower() for t in tokens if t.isalpha()]
 
-    # Comparación de tokens normalizados con etiquetas de servicios
     coincidencias = []
     for servicio, etiquetas in SERVICIOS_DB.items():
         if any(token in etiquetas for token in limpios):
