@@ -4,4 +4,5 @@ sqlalchemy
 psycopg2-binary
 pydantic-settings
 scipy
-nltkgunicorn
+nltk
+gunicorn
