@@ -18,11 +18,11 @@ except LookupError:
 
 app = FastAPI()
 
-# Configuración de CORS optimizada para permitir peticiones desde cualquier frontend (Vercel, Localhost, etc.)
+# Configuración de CORS actualizada para permitir tu frontend local y el de Vercel
 app.add_middleware(
     CORSMiddleware, 
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=["*"],  # Permite conexiones desde cualquier origen (ideal para producción con Vercel)
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
